@@ -6,8 +6,8 @@ authors = [{ name = "Your Name", email = "you@example.com" }]
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "crewai[tools]>=0.118.0,<1.0.0",
-    "copilotkit>=0.1.47a0",
-    "copilotkit[crewai]>=0.1.47a0",
+    "copilotkit>=0.1.47a1",
+    "copilotkit[crewai]>=0.1.47a1",
 ]
 
 [project.scripts]
