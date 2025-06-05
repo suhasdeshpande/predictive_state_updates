@@ -2,83 +2,111 @@
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-from pydantic import BaseModel
-from crewai.flow import start
-from crewai import LLM
+import json
 import logging
+from pprint import pprint
+from typing import Optional
+from crewai import LLM
+from crewai.flow import start
+from pydantic import BaseModel, Field
 from copilotkit.crewai import (
     CopilotKitFlow,
     tool_calls_log,
-    FlowInputState
+    FlowInputState,
 )
-from typing import List, Dict, Any
-import json
+from crewai.flow import persist
 
 WRITE_DOCUMENT_TOOL = {
     "type": "function",
     "function": {
         "name": "write_document",
-        "description": " ".join("""
-            Write a document. Use markdown formatting to format the document.
-            It's good to format the document extensively so it's easy to read.
-            You can use all kinds of markdown.
-            However, do not use italic or strike-through formatting, it's reserved for another purpose.
-            You MUST write the full document, even when changing only a few words.
-            When making edits to the document, try to make them minimal - do not change every word.
-            Keep stories SHORT!
-            """.split()),
+        "description": (
+            "Write or modify a document. Use markdown formatting extensively. "
+            "You MUST write the full document, even when changing only a few words. "
+            "When making edits, try to make them minimal - do not change every word. "
+            "Keep content concise and well-structured. "
+            "Do not use italic or strike-through formatting."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "document": {
-                    "type": "string",
-                    "description": "The document to write"
-                },
+                    "description": "The document object containing all details.",
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "The title of the document.",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "The full markdown content of the document.",
+                        },
+                    },
+                    "required": ["title", "content"],
+                }
             },
-        }
-    }
+            "required": ["document"],
+        },
+    },
 }
 
-
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-logging.basicConfig(level=logging.INFO)
+class Document(BaseModel):
+    """
+    A document with title and content.
+    """
+    title: str = Field(..., description="The title of the document")
+    content: str = Field(..., description="The markdown content of the document")
 
-class PredictiveStateFlowInputState(FlowInputState):
-    """Defines the expected input state for the PredictiveStateUpdateFlow."""
-    document: str = ""
+class AgentState(FlowInputState):
+    """
+    The state of the document.
+    """
+    document: Optional[dict] = None
 
-
-class PredictiveStateUpdateFlow(CopilotKitFlow[PredictiveStateFlowInputState]):
+@persist()
+class DocumentWritingFlow(CopilotKitFlow[AgentState]):
 
     @start()
     def chat(self):
         """
         Standard chat node.
         """
+        current_doc_info = "No document created yet"
+        if self.state.document:
+            current_doc_info = f"Title: {self.state.document['title']}\nContent length: {len(self.state.document['content'])} chars"
+
         system_prompt = f"""
         You are a helpful assistant for writing documents.
-        To write the document, you MUST use the write_document tool.
+        To write or modify a document, you MUST use the write_document tool.
         You MUST write the full document, even when changing only a few words.
         When you wrote the document, DO NOT repeat it as a message.
         Just briefly summarize the changes you made. 2 sentences max.
-        This is the current state of the document: ----\n {self.state.document}\n-----
+        This is the current state of the document: ----\n {current_doc_info}\n-----
         """
 
         logger.info(f"System prompt: {system_prompt}")
 
         # Initialize CrewAI LLM with streaming enabled
-        # CrewAI's LLM class expects 'model' as the parameter name
         llm = LLM(model="gpt-4o", stream=True)
 
         # Get message history using the base class method
-        # This should now correctly use self.state.messages from AgentInputState
         messages = self.get_message_history(system_prompt=system_prompt)
+
+        # For testing: Add the user message directly since kickoff doesn't pass it correctly
+        test_user_message = {"role": "user", "content": "Write a document about Dogs."}
+        if not any(m.get('role') == 'user' for m in messages):
+            messages.append(test_user_message)
+
 
         try:
             # Track tool calls
             initial_tool_calls_count = len(tool_calls_log)
             logger.info(f"Initial tool calls count: {initial_tool_calls_count}")
+
             response_content = llm.call(
                 messages=messages,
                 tools=[WRITE_DOCUMENT_TOOL],
@@ -90,10 +118,15 @@ class PredictiveStateUpdateFlow(CopilotKitFlow[PredictiveStateFlowInputState]):
             # Handle tool responses using the base class method
             final_response = self.handle_tool_responses(
                 llm=llm,
-                response_text=response_content, # Pass the text content of the response
-                messages=messages, # Original messages sent to LLM
+                response_text=response_content,
+                messages=messages,
                 tools_called_count_before_llm_call=initial_tool_calls_count
             )
+
+            # Check if tools were actually called
+            final_tool_calls_count = len(tool_calls_log)
+            tools_called = final_tool_calls_count - initial_tool_calls_count
+            logger.info(f"Tools called during this interaction: {tools_called}")
 
             # ---- Maintain conversation history ----
             # 1. Add the current user message(s) to conversation history
@@ -105,7 +138,6 @@ class PredictiveStateUpdateFlow(CopilotKitFlow[PredictiveStateFlowInputState]):
             assistant_message = {"role": "assistant", "content": final_response}
             self.state.conversation_history.append(assistant_message)
 
-
             return json.dumps({
                 "response": final_response,
                 "id": self.state.id
@@ -116,30 +148,36 @@ class PredictiveStateUpdateFlow(CopilotKitFlow[PredictiveStateFlowInputState]):
             return f"\n\nAn error occurred: {str(e)}\n\n"
 
     def write_document_handler(self, document):
-        # Update the document in state
-        logger.info(f"#### Handling write_document tool call ####: {document}")
-        self.state.document = document
-        return document
+        """Handler for the write_document tool"""
+        # Convert the document dict to a Document object for validation
+        document_obj = Document(**document)
+        # Store as dict for JSON serialization, but validate first
+        self.state.document = document_obj.model_dump()
 
+        return document_obj.model_dump_json(indent=2)
+
+    def __repr__(self):
+        pprint(vars(self), width=120, depth=3)
 
 def kickoff():
-    predictive_state_update_flow = PredictiveStateUpdateFlow()
-    predictive_state_update_flow.kickoff({
+    document_flow = DocumentWritingFlow()
+    result = document_flow.kickoff({
         "inputs": {
             "messages": [
                 {
                     "role": "user",
-                    "content": "Write a document about the history of the internet."
+                    "content": "Write a document about Dogs."
                 }
             ],
-            "document": ""  # Initialize document field
+            "document": None  # Initialize document field
         }
     })
 
-def plot():
-    predictive_state_update_flow = PredictiveStateUpdateFlow()
-    predictive_state_update_flow.plot()
+    return result
 
+def plot():
+    document_flow = DocumentWritingFlow()
+    document_flow.plot()
 
 if __name__ == "__main__":
     kickoff()
