@@ -70,6 +70,12 @@ class AgentState(FlowInputState):
 @persist()
 class DocumentWritingFlow(CopilotKitFlow[AgentState]):
 
+    def __init__(self, *args, **kwargs):
+        logger.info(f"DocumentWritingFlow.__init__ called with args: {args}")
+        logger.info(f"DocumentWritingFlow.__init__ called with kwargs: {kwargs}")
+        super().__init__(*args, **kwargs)
+        logger.info(f"DocumentWritingFlow.__init__ completed. State: {getattr(self, 'state', 'No state')}")
+
     @start()
     def chat(self):
         """
@@ -155,9 +161,6 @@ class DocumentWritingFlow(CopilotKitFlow[AgentState]):
         self.state.document = document_obj.model_dump()
 
         return document_obj.model_dump_json(indent=2)
-
-    def __repr__(self):
-        pprint(vars(self), width=120, depth=3)
 
 def kickoff():
     document_flow = DocumentWritingFlow()
