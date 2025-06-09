@@ -13,7 +13,7 @@ from copilotkit.crewai import (
     tool_calls_log,
     FlowInputState
 )
-from crewai.utilities.events import BaseEvent
+from crewai.utilities.events.base_events import BaseEvent
 from crewai.flow import persist
 from crewai.utilities.events import crewai_event_bus
 
