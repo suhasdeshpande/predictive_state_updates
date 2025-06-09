@@ -56,53 +56,30 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class CopilotKitStateUpdateEvent(BaseEvent):
-    """
-    Event for state updates in CopilotKit
-    """
+    """Event for state updates in CopilotKit"""
     type: str = "copilotkit_state_update"
     tool_name: str
     args: dict[str, Any]
-    timestamp: str = Field(default_factory=lambda: __import__('datetime').datetime.now().isoformat(), description="Event timestamp")
-
-    def __init__(self, **data):
-        super().__init__(**data)
+    timestamp: str = Field(default_factory=lambda: __import__('datetime').datetime.now().isoformat())
 
 class Document(BaseModel):
-    """
-    A document with title and content.
-    """
+    """A document with title and content."""
     title: str = Field(..., description="The title of the document")
     content: str = Field(..., description="The markdown content of the document")
 
 class AgentState(FlowInputState):
-    """
-    The state of the document.
-    """
-    document: Optional[str] = None
+    """The state of the document."""
+    data: dict[str, Any] = Field(default_factory=lambda: {"document": None}, description="Data containing document")
 
 @persist()
 class DocumentWritingFlow(CopilotKitFlow[AgentState]):
 
-    def __init__(self, *args, **kwargs):
-        print(f"=== INIT CALLED === args: {args}")
-        print(f"=== INIT CALLED === kwargs: {kwargs}")
-        logger.info(f"DocumentWritingFlow.__init__ called with args: {args}")
-        logger.info(f"DocumentWritingFlow.__init__ called with kwargs: {kwargs}")
-        super().__init__(*args, **kwargs)
-        print(f"=== INIT COMPLETED === State: {getattr(self, 'state', 'No state')}")
-        logger.info(f"DocumentWritingFlow.__init__ completed. State: {getattr(self, 'state', 'No state')}")
-
     @start()
     def chat(self):
-        """
-        Standard chat node.
-        """
-        print(f"=== CHAT START === State: {self.state}")
-        logger.info(f"=== CHAT START === State: {self.state}")
-
+        """Standard chat node."""
         current_doc_info = "No document created yet"
-        if self.state.document:
-            current_doc_info = f"Document: {self.state.document}"
+        if self.state.data.get("document"):
+            current_doc_info = f"Document: {self.state.data['document']}"
 
         system_prompt = f"""
         You are a helpful assistant for writing documents.
@@ -113,32 +90,21 @@ class DocumentWritingFlow(CopilotKitFlow[AgentState]):
         This is the current state of the document: ----\n {current_doc_info}\n-----
         """
 
-        logger.info(f"System prompt: {system_prompt}")
-
         # Initialize CrewAI LLM with streaming enabled
         llm = LLM(model="gpt-4o", stream=True)
 
         # Get message history using the base class method
         messages = self.get_message_history(system_prompt=system_prompt)
 
-        # For testing: Add the user message directly since kickoff doesn't pass it correctly
-        test_user_message = {"role": "user", "content": "Write a document about Dogs."}
-        if not any(m.get('role') == 'user' for m in messages):
-            messages.append(test_user_message)
-
-
         try:
             # Track tool calls
             initial_tool_calls_count = len(tool_calls_log)
-            logger.info(f"Initial tool calls count: {initial_tool_calls_count}")
 
             response_content = llm.call(
                 messages=messages,
                 tools=[WRITE_DOCUMENT_TOOL],
                 available_functions={"write_document": self.write_document_handler}
             )
-
-            logger.info(f"Response content: {response_content}")
 
             # Handle tool responses using the base class method
             final_response = self.handle_tool_responses(
@@ -148,18 +114,11 @@ class DocumentWritingFlow(CopilotKitFlow[AgentState]):
                 tools_called_count_before_llm_call=initial_tool_calls_count
             )
 
-            # Check if tools were actually called
-            final_tool_calls_count = len(tool_calls_log)
-            tools_called = final_tool_calls_count - initial_tool_calls_count
-            logger.info(f"Tools called during this interaction: {tools_called}")
-
-            # ---- Maintain conversation history ----
-            # 1. Add the current user message(s) to conversation history
+            # Maintain conversation history
             for msg in self.state.messages:
                 if msg.get('role') == 'user' and msg not in self.state.conversation_history:
                     self.state.conversation_history.append(msg)
 
-            # 2. Add the assistant's response to conversation history
             assistant_message = {"role": "assistant", "content": final_response}
             self.state.conversation_history.append(assistant_message)
 
@@ -176,53 +135,42 @@ class DocumentWritingFlow(CopilotKitFlow[AgentState]):
         """Handler for the write_document tool"""
         # Convert the document dict to a Document object for validation
         document_obj = Document(**document)
-        # Store the full document as string (matching AgentState type)
-        self.state.document = f"Title: {document_obj.title}\n\nContent:\n{document_obj.content}"
-        print(f"=== DOCUMENT STORED === \n {self.state.document}")
+        # Store the full document as string in data.document
+        self.state.data["document"] = f"Title: {document_obj.title}\n\nContent:\n{document_obj.content}"
 
         # Fire state update event
         try:
-            print("=== ABOUT TO CREATE STATE UPDATE EVENT ===")
             state_update_event = CopilotKitStateUpdateEvent(
                 tool_name="write_document",
-                args={"document": self.state.document}
+                args={"document": self.state.data["document"]}
             )
-            print(f"=== STATE UPDATE EVENT CREATED: {state_update_event} ===")
-            logger.info(f"Emitting state update event with document: {document_obj.title}")
-            print("=== ABOUT TO EMIT EVENT ===")
             crewai_event_bus.emit(None, event=state_update_event)
-            print("=== EVENT EMITTED ===")
         except Exception as e:
-            print(f"=== ERROR IN STATE UPDATE: {e} ===")
             logger.error(f"Error emitting state update event: {e}")
 
-        return document_obj.model_dump_json(indent=2)
+        return "Document written successfully."
 
 def kickoff():
-    logger.info("=== KICKOFF STARTING ===")
+    """Initialize and run the document writing flow"""
     document_flow = DocumentWritingFlow()
-    logger.info("=== DocumentWritingFlow CREATED ===")
 
     inputs = {
         "inputs": {
-            "state": { "document": 'Life of dog' },
-            "messages": [
-                {
-                    "id": "ck-687c4250-1dd9-4a56-bd49-c96f068c7a78",
-                    "role": "user",
-                    "content": "Write a document."
-                }
-            ]
+            "state": {
+                "id": "",
+                "timestamp": 0,
+                "source": "",
+                "data": {"document": None}
+            },
+            "messages": []
         }
     }
-    logger.info(f"=== INPUTS: {inputs} ===")
 
     result = document_flow.kickoff(inputs)
-    logger.info(f"=== RESULT: {result} ===")
-    print(f"FINAL RESULT: {result}")  # Use print to ensure it shows up
-
+    print(result)
 
 def plot():
+    """Generate flow visualization"""
     document_flow = DocumentWritingFlow()
     document_flow.plot()
 
