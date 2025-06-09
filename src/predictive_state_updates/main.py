@@ -13,6 +13,7 @@ from copilotkit.crewai import (
     tool_calls_log,
     FlowInputState
 )
+from crewai.utilities.events import BaseEvent
 from crewai.flow import persist
 from crewai.utilities.events import crewai_event_bus
 
@@ -54,14 +55,14 @@ WRITE_DOCUMENT_TOOL = {
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class CopilotKitStateUpdateEvent(BaseModel):
+class CopilotKitStateUpdateEvent(BaseEvent):
     """
     Event for state updates in CopilotKit
     """
     type: str = "copilotkit_state_update"
     tool_name: str
     args: dict[str, Any]
-    timestamp: float = Field(default_factory=lambda: __import__('time').time(), description="Event timestamp")
+    timestamp: str = Field(default_factory=lambda: __import__('datetime').datetime.now().isoformat(), description="Event timestamp")
 
     def __init__(self, **data):
         super().__init__(**data)
