@@ -13,6 +13,7 @@ from copilotkit.crewai import (
     CopilotKitFlow,
     tool_calls_log,
     FlowInputState,
+    crewai_event_bus,
 )
 from crewai.flow import persist
 
@@ -53,6 +54,13 @@ WRITE_DOCUMENT_TOOL = {
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+class CopilotKitStateUpdateEvent(BaseModel):
+    """
+    Event for state updates in CopilotKit
+    """
+    state: dict = Field(..., description="The updated state")
+    timestamp: float = Field(default_factory=lambda: __import__('time').time(), description="Event timestamp")
 
 class Document(BaseModel):
     """
@@ -163,9 +171,16 @@ class DocumentWritingFlow(CopilotKitFlow[AgentState]):
         """Handler for the write_document tool"""
         # Convert the document dict to a Document object for validation
         document_obj = Document(**document)
-        # Store the document title as string (matching AgentState type)
-        self.state.document = document_obj.title
-        print(f"=== DOCUMENT STORED === {self.state.document}")
+        # Store the full document as string (matching AgentState type)
+        self.state.document = f"Title: {document_obj.title}\n\nContent:\n{document_obj.content}"
+        print(f"=== DOCUMENT STORED === \n {self.state.document}")
+
+        # Fire state update event
+        state_update_event = CopilotKitStateUpdateEvent(
+            state={"document": self.state.document}
+        )
+        logger.info(f"Emitting state update event with document: {document_obj.title}")
+        crewai_event_bus.emit(None, event=state_update_event)
 
         return document_obj.model_dump_json(indent=2)
 
@@ -181,7 +196,7 @@ def kickoff():
                 {
                     "id": "ck-687c4250-1dd9-4a56-bd49-c96f068c7a78",
                     "role": "user",
-                    "content": "Write a story"
+                    "content": "Write a document."
                 }
             ]
         }
