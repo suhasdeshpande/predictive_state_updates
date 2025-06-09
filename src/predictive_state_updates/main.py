@@ -4,18 +4,17 @@ load_dotenv(override=True)
 
 import json
 import logging
-from pprint import pprint
-from typing import Optional
+from typing import Optional, Any
 from crewai import LLM
 from crewai.flow import start
 from pydantic import BaseModel, Field
 from copilotkit.crewai import (
     CopilotKitFlow,
     tool_calls_log,
-    FlowInputState,
-    crewai_event_bus,
+    FlowInputState
 )
 from crewai.flow import persist
+from crewai.utilities.events import crewai_event_bus
 
 WRITE_DOCUMENT_TOOL = {
     "type": "function",
@@ -59,8 +58,13 @@ class CopilotKitStateUpdateEvent(BaseModel):
     """
     Event for state updates in CopilotKit
     """
-    state: dict = Field(..., description="The updated state")
+    type: str = "copilotkit_state_update"
+    tool_name: str
+    args: dict[str, Any]
     timestamp: float = Field(default_factory=lambda: __import__('time').time(), description="Event timestamp")
+
+    def __init__(self, **data):
+        super().__init__(**data)
 
 class Document(BaseModel):
     """
@@ -176,11 +180,20 @@ class DocumentWritingFlow(CopilotKitFlow[AgentState]):
         print(f"=== DOCUMENT STORED === \n {self.state.document}")
 
         # Fire state update event
-        state_update_event = CopilotKitStateUpdateEvent(
-            state={"document": self.state.document}
-        )
-        logger.info(f"Emitting state update event with document: {document_obj.title}")
-        crewai_event_bus.emit(None, event=state_update_event)
+        try:
+            print("=== ABOUT TO CREATE STATE UPDATE EVENT ===")
+            state_update_event = CopilotKitStateUpdateEvent(
+                tool_name="write_document",
+                args={"document": self.state.document}
+            )
+            print(f"=== STATE UPDATE EVENT CREATED: {state_update_event} ===")
+            logger.info(f"Emitting state update event with document: {document_obj.title}")
+            print("=== ABOUT TO EMIT EVENT ===")
+            crewai_event_bus.emit(None, event=state_update_event)
+            print("=== EVENT EMITTED ===")
+        except Exception as e:
+            print(f"=== ERROR IN STATE UPDATE: {e} ===")
+            logger.error(f"Error emitting state update event: {e}")
 
         return document_obj.model_dump_json(indent=2)
 
