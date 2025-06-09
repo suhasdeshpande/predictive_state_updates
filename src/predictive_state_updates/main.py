@@ -65,15 +65,18 @@ class AgentState(FlowInputState):
     """
     The state of the document.
     """
-    document: Optional[dict] = None
+    document: Optional[str] = None
 
 @persist()
 class DocumentWritingFlow(CopilotKitFlow[AgentState]):
 
     def __init__(self, *args, **kwargs):
+        print(f"=== INIT CALLED === args: {args}")
+        print(f"=== INIT CALLED === kwargs: {kwargs}")
         logger.info(f"DocumentWritingFlow.__init__ called with args: {args}")
         logger.info(f"DocumentWritingFlow.__init__ called with kwargs: {kwargs}")
         super().__init__(*args, **kwargs)
+        print(f"=== INIT COMPLETED === State: {getattr(self, 'state', 'No state')}")
         logger.info(f"DocumentWritingFlow.__init__ completed. State: {getattr(self, 'state', 'No state')}")
 
     @start()
@@ -81,9 +84,12 @@ class DocumentWritingFlow(CopilotKitFlow[AgentState]):
         """
         Standard chat node.
         """
+        print(f"=== CHAT START === State: {self.state}")
+        logger.info(f"=== CHAT START === State: {self.state}")
+
         current_doc_info = "No document created yet"
         if self.state.document:
-            current_doc_info = f"Title: {self.state.document['title']}\nContent length: {len(self.state.document['content'])} chars"
+            current_doc_info = f"Document: {self.state.document}"
 
         system_prompt = f"""
         You are a helpful assistant for writing documents.
@@ -157,26 +163,35 @@ class DocumentWritingFlow(CopilotKitFlow[AgentState]):
         """Handler for the write_document tool"""
         # Convert the document dict to a Document object for validation
         document_obj = Document(**document)
-        # Store as dict for JSON serialization, but validate first
-        self.state.document = document_obj.model_dump()
+        # Store the document title as string (matching AgentState type)
+        self.state.document = document_obj.title
+        print(f"=== DOCUMENT STORED === {self.state.document}")
 
         return document_obj.model_dump_json(indent=2)
 
 def kickoff():
+    logger.info("=== KICKOFF STARTING ===")
     document_flow = DocumentWritingFlow()
-    result = document_flow.kickoff({
+    logger.info("=== DocumentWritingFlow CREATED ===")
+
+    inputs = {
         "inputs": {
+            "state": { "document": 'Life of dog' },
             "messages": [
                 {
+                    "id": "ck-687c4250-1dd9-4a56-bd49-c96f068c7a78",
                     "role": "user",
-                    "content": "Write a document about Dogs."
+                    "content": "Write a story"
                 }
-            ],
-            "document": None  # Initialize document field
+            ]
         }
-    })
+    }
+    logger.info(f"=== INPUTS: {inputs} ===")
 
-    return result
+    result = document_flow.kickoff(inputs)
+    logger.info(f"=== RESULT: {result} ===")
+    print(f"FINAL RESULT: {result}")  # Use print to ensure it shows up
+
 
 def plot():
     document_flow = DocumentWritingFlow()
