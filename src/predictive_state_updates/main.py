@@ -4,18 +4,17 @@ load_dotenv(override=True)
 
 import json
 import logging
-from typing import Optional, Any
+from typing import Any
 from crewai import LLM
 from crewai.flow import start
 from pydantic import BaseModel, Field
 from copilotkit.crewai import (
     CopilotKitFlow,
     tool_calls_log,
-    FlowInputState
+    FlowInputState,
+    emit_copilotkit_state_update_event
 )
-from crewai.utilities.events.base_events import BaseEvent
 from crewai.flow import persist
-from crewai.utilities.events import crewai_event_bus
 
 WRITE_DOCUMENT_TOOL = {
     "type": "function",
@@ -55,12 +54,6 @@ WRITE_DOCUMENT_TOOL = {
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class CopilotKitStateUpdateEvent(BaseEvent):
-    """Event for state updates in CopilotKit"""
-    type: str = "copilotkit_state_update"
-    tool_name: str
-    args: dict[str, Any]
-    timestamp: str = Field(default_factory=lambda: __import__('datetime').datetime.now().isoformat())
 
 class Document(BaseModel):
     """A document with title and content."""
@@ -140,11 +133,10 @@ class DocumentWritingFlow(CopilotKitFlow[AgentState]):
 
         # Fire state update event
         try:
-            state_update_event = CopilotKitStateUpdateEvent(
+            emit_copilotkit_state_update_event(
                 tool_name="write_document",
                 args={"document": self.state.data["document"]}
             )
-            crewai_event_bus.emit(None, event=state_update_event)
         except Exception as e:
             logger.error(f"Error emitting state update event: {e}")
 
