@@ -88,6 +88,12 @@ class DocumentWritingFlow(CopilotKitFlow[AgentState]):
 
         # Get message history using the base class method
         messages = self.get_message_history(system_prompt=system_prompt)
+        # Get available tools using the base class method
+        # This should now correctly use self.state.tools from AgentInputState
+        tools_definitions = self.get_available_tools()
+
+        # Format tools for OpenAI API using the base class method
+        formatted_tools, available_functions = self.format_tools_for_llm(tools_definitions)
 
         try:
             # Track tool calls
@@ -95,8 +101,14 @@ class DocumentWritingFlow(CopilotKitFlow[AgentState]):
 
             response_content = llm.call(
                 messages=messages,
-                tools=[WRITE_DOCUMENT_TOOL],
-                available_functions={"write_document": self.write_document_handler}
+                tools=[
+                    WRITE_DOCUMENT_TOOL,
+                    *formatted_tools
+                ],
+                available_functions={
+                    "write_document": self.write_document_handler,
+                    **available_functions
+                }
             )
 
             # Handle tool responses using the base class method
