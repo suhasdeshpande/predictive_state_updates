@@ -62,7 +62,7 @@ class Document(BaseModel):
 
 class AgentState(FlowInputState):
     """The state of the document."""
-    data: dict[str, Any] = Field(default_factory=lambda: {"document": None}, description="Data containing document")
+    document: Document = None
 
 @persist()
 class DocumentWritingFlow(CopilotKitFlow[AgentState]):
@@ -71,8 +71,8 @@ class DocumentWritingFlow(CopilotKitFlow[AgentState]):
     def chat(self):
         """Standard chat node."""
         current_doc_info = "No document created yet"
-        if self.state.data.get("document"):
-            current_doc_info = f"Document: {self.state.data['document']}"
+        if self.state.document:
+            current_doc_info = f"Document: {self.state.document}"
 
         system_prompt = f"""
         You are a helpful assistant for writing documents.
@@ -141,13 +141,13 @@ class DocumentWritingFlow(CopilotKitFlow[AgentState]):
         # Convert the document dict to a Document object for validation
         document_obj = Document(**document)
         # Store the full document as string in data.document
-        self.state.data["document"] = f"Title: {document_obj.title}\n\nContent:\n{document_obj.content}"
+        self.state.document = document_obj
 
         # Fire state update event
         try:
             emit_copilotkit_state_update_event(
                 tool_name="write_document",
-                args={"document": self.state.data["document"]}
+                args={"document": self.state}
             )
         except Exception as e:
             logger.error(f"Error emitting state update event: {e}")
